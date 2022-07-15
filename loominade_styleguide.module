@@ -1,0 +1,135 @@
+<?php
+
+use Laminas\Stdlib\Glob;
+use Drupal\Component\Serialization\Yaml;
+use Drupal\Core\Template\Attribute;
+use Drupal\Core\Render\Markup;
+
+/**
+ * @file
+ * Primary module hooks for Loominade Styleguide module.
+ *
+ */
+
+function loominade_styleguide_styleguide_alter(array &$items) {
+  $theme_manager = \Drupal::service('theme.manager');;
+  $theme_path = $theme_manager->getActiveTheme()->getPath();
+  $meta_ymls = Glob::glob($theme_path . '/*/*/*.meta.yml');
+  foreach ($meta_ymls as $meta_yml) {
+    preg_match('%([^\.\/]+).meta.yml$%', $meta_yml, $matches);
+    $component = $matches[1];
+    $meta = Yaml::decode(file_get_contents($meta_yml));
+    $examples = Yaml::decode(file_get_contents(preg_replace('%\.meta\.yml$%', '.example.yml', $meta_yml)));
+    $twig = file_get_contents(preg_replace('%\.meta\.yml$%', '.twig', $meta_yml));
+    $types = loominade_styleguide_guess_types(is_array($examples) ? $examples[0] : $examples);
+
+    $items[$component] = [
+      'title' => $meta['name'],
+      'description' => loominade_styleguide_make_type_table($types),
+      'content' => [],
+    ];
+
+    if (!is_array($examples)) {
+      \Drupal::messenger()->addError(t('Example content is missing for @name', ['@name' => $component]));
+      continue;
+    }
+
+    foreach ($examples as $example) {
+      $items[$component]['content'][] = [
+        "#type" => "inline_template",
+        "#template" => $twig,
+        '#context' => loominade_styleguide_make_markup($example),
+      ];
+      if (isset($meta['block'])) {
+        $items[$component]['block'] = $meta['block'];
+      }
+    }
+  }
+}
+
+function loominade_styleguide_make_markup($fields) {
+  foreach ($fields as $key => $field) {
+    if ($field == '[form]') {
+      $fields[$key] = \Drupal::formBuilder()->getForm('Drupal\styleguide\Form\StyleguideForm');
+    } else if (is_string($field)) {
+      $fields[$key] = Markup::create($field);
+    } else if (str_contains($key, 'attributes')) {
+      $fields[$key] = new Attribute($fields[$key]);
+    } else if (is_array($field)) {
+      $fields[$key] = loominade_styleguide_make_markup($field);
+    } 
+  }
+  return $fields;
+}
+
+function loominade_styleguide_guess_types($fields) {
+  $output = [];
+  foreach ($fields as $key => $field) {
+    if (is_string($field)) {
+      $output[$key] = [
+        'name' => $key,
+        'type' => 'string',
+        'example' => $field,
+      ];
+      if ($field == '[form]') {
+        $output[$key]['type'] = 'Drupal Form';
+      }
+      if (preg_match("%(\&[^;]+;|\<(em|a|strong)[^\>]*\>)%", $field)) {
+        $output[$key]['type'] = 'inline html';
+      }
+      if (preg_match("%<(p|ul|ol|h1|h2|h3|h4|h5)[^\>]*\>%", $field)) {
+        $output[$key]['type'] = 'html';
+      }
+      if (preg_match("%<img %", $field)) {
+        $output[$key]['type'] = 'image';
+      }
+      if ($key === 'url') {
+        $output[$key]['type'] = 'uri string';
+      }
+    } else if (is_bool($field)) {
+      $output[$key]['type'] = 'bool';
+      $output[$key]['example'] = $field ? 'true' : 'false';
+    } else if (str_contains($key, 'attributes')) {
+      $output[$key]['type'] = 'attributes';
+      $output[$key]['example'] = '{ id: "a-unique-id" }';
+    } else if (is_array($field)) {
+      $output[$key]['sub_fields'] = loominade_styleguide_guess_types($field);
+    }
+  }
+  return $output;
+}
+
+function loominade_styleguide_make_type_table_rows($types, $parent = '') {
+  foreach ($types as $key => $field) {
+    $type = isset($field['type']) ? $field['type'] : false;
+    $example = isset($field['example']) ? substr(htmlspecialchars($field['example']), 0, 50) . '…' : false; 
+    $indent = '';
+    if ($parent) {
+      $indent = "<code>$parent</code>→";
+    }
+    $rows[] = [ 
+      Markup::create("$indent<code>$key</code>"), 
+      $type,
+      $example ? Markup::create("<code>$example</code>") : '',
+    ];
+    if (isset($field['sub_fields'][0])) {
+      $rows = array_merge($rows, loominade_styleguide_make_type_table_rows($field['sub_fields'][0]['sub_fields'], $key));
+    } else {
+      if (isset($field['sub_fields'])) {
+        $rows = array_merge($rows, loominade_styleguide_make_type_table_rows($field['sub_fields'], $key));
+      }
+    }
+  }
+  return $rows;
+};
+
+function loominade_styleguide_make_type_table($types) {
+  $header = [t('Name'), t('Type'), t('Example')];
+  $rows = [];
+
+  return [
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => loominade_styleguide_make_type_table_rows($types),
+  ];
+}

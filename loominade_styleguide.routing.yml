@@ -1,0 +1,7 @@
+loominade_styleguide.settings_form:
+  path: '/admin/config/system/loominade-styleguide'
+  defaults:
+    _title: 'Loominade Styleguide settings'
+    _form: 'Drupal\loominade_styleguide\Form\SettingsForm'
+  requirements:
+    _permission: 'administer loominade_styleguide configuration'

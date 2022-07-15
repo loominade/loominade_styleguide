@@ -1,0 +1,6 @@
+loominade_styleguide.settings_form:
+  title: Loominade Styleguide
+  description: Configure Loominade Styleguide.
+  parent: system.admin_config_system
+  route_name: loominade_styleguide.settings_form
+  weight: 10
